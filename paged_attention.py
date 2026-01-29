@@ -77,7 +77,8 @@ class BlockManager:
     
     def _allocate(self) -> Optional[Page]:
         if not self.free:
-            return "all the pages are occupied"
+            print("all the pages are occupied")
+            return None
         
         page_to_be_allocated = self.free.popleft() # remove the left side page
         page_to_be_allocated.ref_count += 1
@@ -94,3 +95,35 @@ class BlockManager:
             self.allocated.remove(page)
             self.free.append(page)
             page.kv.zero_() # clear the kv cache
+    
+    def allocate_for_sequence(self, sequence: Sequence) -> bool:
+        num_pages_needed = sequence.get_num_pages_needed()
+        current_pages = len(sequence.logical_pages)
+        pages_to_allocate = num_pages_needed - current_pages
+
+        if len(self.free) < pages_to_allocate:
+            return False
+        
+        for i in range(pages_to_allocate):
+            page = self._allocate()
+            if page is None:
+                return False
+            
+            logical_id = current_pages + i
+            sequence.logical_pages.append(logical_id)
+            sequence.page_table.map_page(logical_id, page)
+        
+        return True
+    
+    def free_sequence(self, sequence: Sequence):
+        for logical_id in sequence.logical_pages:
+            page = sequence.page_table.get_page(logical_id)
+            if page:
+                self._deallocate(page)
+        
+        sequence.logical_pages.clear()
+        sequence.page_table.map.clear()
+    
+
+
+
