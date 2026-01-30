@@ -4,7 +4,7 @@ import uuid
 from dataclasses import dataclass, field
 from collections import deque
 
-from typing import Optional
+from typing import Optional, List
 
 @dataclass
 class Config:
@@ -62,7 +62,7 @@ class Sequence:
         return len(self.tokens)
     
     def get_num_pages_needed(self) -> int:
-        return (self.tokens + self.page_size -1 ) // self.page_size
+        return (len(self.tokens) + self.page_size -1 ) // self.page_size
     
     def append_token(self, token_id: int):
         self.tokens.append(token_id)
@@ -123,6 +123,48 @@ class BlockManager:
         
         sequence.logical_pages.clear()
         sequence.page_table.map.clear()
+    
+    def get_num_free_pages(self):
+        return len(self.free)
+
+
+if __name__ == '__main__':
+    config = Config(num_head = 8, head_dim = 64, page_size = 16)
+    block_manager = BlockManager(num_pages = 10, page_size = config.page_size)
+    
+    print(f"\ninitialized block manager with {len(block_manager.pages)} pages")
+    print(f"page size: {config.page_size} tokens per page")
+
+    prompt_tokens = list(range(50))
+    seq1 = Sequence(seq_id = 1, prompt_tokens = prompt_tokens, page_size = config.page_size)
+
+    print(f"\n{seq1}")
+    print(f"tokens: {seq1.get_num_tokens()}")
+    print(f"pages needed: {seq1.get_num_pages_needed()}")
+
+    print("\n====== prefill phase =========")
+    success = block_manager.allocate_for_sequence(seq1)
+    print(f"allocation successful: {success}")
+    print(f"logical pages: {seq1.logical_pages}")
+    print(f"page table: {seq1.page_table}")
+    print(f"free pages remaining: {block_manager.get_num_free_pages()}")
+
+    print("\n====== decode phase =========")
+    for i in range(20):
+        new_token = 100 + i
+        seq1.append_token(new_token)
+
+        pages_needed = seq1.get_num_pages_needed()
+        if pages_needed > len(seq1.logical_pages):
+            print(f"\ntoken {i+1}: need new page (total tokens: {seq1.get_num_tokens()})")
+            success = block_manager.allocate_for_sequence(seq1)
+            print(f"allocated page {seq1.logical_pages[-1]}")
+        else:
+            print(f"token {i+1}: using existing pages (total tokens: {seq1.get_num_tokens()})")
+    
+    print(f"\nfinal sequence state: {seq1}")
+    print(f"free pages: {block_manager.get_num_free_pages()}")
+    
     
 
 
