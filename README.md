@@ -15,8 +15,25 @@ paged attention borrrows concepts from OS and implements a paging based attentio
 
 ### components
 
-1. **page** - the page is the smallest unit in the physical memory. 
-    - it is defined by `page_size` and stores a store portion of the kv cache.
-    it also has a `ref_count` that tells you how many sequences are using this particular page. for example, the same system prompt will point to the same page always.
+1. **page** - the page(often called as block) is the smallest allocation unit for the kv cache.
+    - it stores the kv for a fixed number of tokens defined by the `page_size` (this is not bytes)
+    - it also has a `ref_count` that tells you how many sequences are using this particular page. this enables two things -
+        1. prefix sharing - a lot of the requests start with the same system prompt. it makes sense to not store duplicated kv cache for this each time. prefix sharing enables you to point to the same page if they share the same prefix tokens.
+        2. decoding - for some of the decoding strategies like beam search etc requires starting from the same tokens but diverges as the generation moves forward in time. in this case, multiple sequences share the same initial kv pages but diverge in the future.
+    - it lives in the physical GPU memory. 
 
-2. **page_table** - the page table keeps a mapping of the logical pages to the actual physical page in the GPU
+2. **page_table** - the page table keeps a mapping of the logical pages to the actual physical page in the GPU. 
+    - each request maintains its own page table.
+    - the page table gives the illusion of the pages being contiguous in memory, because the logical pages seem ordered and continuous.
+
+3. **sequence** - the sequence represents the user's decoding request. it has -
+    - token ids
+    - status (WAITING/RUNNING/FINISHED)
+    - page table
+    - current position
+
+4. **block_manager** - the block manager is the whole heart which handles and maintains the allocation and deallocation of pages for every sequence.
+    - handles allocation for the prefill stage
+    - does incremental allocation for the decoding phase.
+    - also does the reference counting for each page
+    - frees the pages when the sequence is finished.
