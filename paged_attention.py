@@ -1,5 +1,8 @@
-import torch
 import uuid
+import math
+
+import torch
+import torch.nn.functional as F
 
 from dataclasses import dataclass, field
 from collections import deque
@@ -8,11 +11,11 @@ from typing import Optional, List
 
 @dataclass
 class Config:
-    num_head: int = 10
-    head_dim: int = 128
+    num_head: int = 8
+    head_dim: int = 64
 
     number_of_pages: int = 10
-    page_size: int = 10
+    page_size: int = 16
 
 
 @dataclass
@@ -127,6 +130,36 @@ class BlockManager:
     def get_num_free_pages(self):
         return len(self.free)
 
+class PagedAttention:
+    def __init__(self, num_heads: int, head_dim: int):
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.scale = 1.0 / math.sqrt(head_dim)
+    
+    def forward(self, query: torch.Tensor, sequence: Sequence):
+        k_blocks = []
+        v_blocks = []
+
+        for logical_id in sequence.logical_pages:
+            page = sequence.page_table.get_page(logical_id) # get the actual physical memory page
+            k_blocks.append(page.kv[0])
+            v_blocks.append(page.kv[1])
+        
+        keys = torch.cat(k_blocks, dim = 0) # becomes (tokens, num_head, head_dim)
+        values = torch.cat(v_blocks, dim = 0)
+
+        num_tokens = sequence.get_num_tokens()
+        keys = keys[:num_tokens].transpose(0, 1)    # (num_head, tokens, head_dim)
+        values = values[:num_tokens].transpose(0, 1)
+
+        q = query.transpose(0, 1)
+        #print(q.shape, keys.shape)
+        attn_weights = torch.matmul(q, keys.transpose(1, 2)) * self.scale
+        attn_weights = F.softmax(attn_weights, dim=-1)
+        output = torch.matmul(attn_weights, values)
+        
+        return output.transpose(0, 1)
+
 
 if __name__ == '__main__':
     config = Config(num_head = 8, head_dim = 64, page_size = 16)
@@ -164,6 +197,16 @@ if __name__ == '__main__':
     
     print(f"\nfinal sequence state: {seq1}")
     print(f"free pages: {block_manager.get_num_free_pages()}")
+
+    pa = PagedAttention(config.num_head, config.head_dim)
+    
+    mock_query = torch.randn(1, config.num_head, config.head_dim)
+    for logical_id in seq1.logical_pages:
+        page = seq1.page_table.get_page(logical_id)
+        page.kv.uniform_(-1, 1) # simulate some KV values
+        
+    attn_output = pa.forward(mock_query, seq1)
+    print(f"\npaged attention output: {attn_output.shape}")
     
     
 
